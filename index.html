@@ -1,0 +1,427 @@
+<!DOCTYPE html>
+<html>
+<head>
+    <style>
+        body, html {
+            margin: 0;
+            padding: 0;
+            width: 100%;
+            height: 100%;
+            overflow: hidden;
+            display: flex;
+            justify-content: center;
+            align-items: center;
+            background: #f0f0f0;
+        }
+        #gameContainer {
+            width: 1600px;
+            height: 800px;
+            background: white;
+            position: relative;
+            border: 4px solid black;
+            overflow: hidden;
+        }
+        #player {
+            /* Animación suave para el movimiento hacia adelante durante el impulso de velocidad */
+            transition: left 0.2s ease-in-out;
+            width: 140px;
+            height: 140px;
+            background: white;
+            border: 4px solid black;
+            position: absolute;
+            bottom: 0;
+            left: 100px;
+            transition: transform 0.1s;
+        }
+        #player.powered {
+            box-shadow: 0 0 20px gold;
+            border-color: gold;
+        }
+        .obstacle {
+            border: 4px solid black;
+            width: 62px;
+            height: 62px;
+            background: red;
+            position: absolute;
+            bottom: 0;
+        }
+        .coin {
+            width: 50px;
+            height: 50px;
+            border-radius: 50%;
+            position: absolute;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            font-weight: bold;
+            color: white;
+            box-shadow: 0 0 10px currentColor;
+        }
+        .coin.green { 
+            background: #50ff50; 
+            color: #00aa00;
+        }
+        .coin.blue { 
+            background: #50f0ff; 
+            color: #0088ff;
+        }
+        .coin.yellow { 
+            background: #ffff50; 
+            color: #ffaa00;
+            animation: pulse 0.5s infinite alternate;
+        }
+        @keyframes pulse {
+            from { transform: scale(1); }
+            to { transform: scale(1.1); }
+        }
+        #score, #timer, #combo {
+            position: absolute;
+            top: 20px;
+            background: white;
+            padding: 10px 20px;
+            border: 2px solid black;
+            font-family: Arial;
+            font-size: 24px;
+            font-weight: bold;
+            border-radius: 5px;
+            z-index: 100;
+        }
+        #score { right: 20px; }
+        #timer { left: 20px; }
+        #combo { 
+            left: 50%; 
+            transform: translateX(-50%);
+        }
+        .screen {
+            position: absolute;
+            top: 0;
+            left: 0;
+            width: 100%;
+            height: 100%;
+            background: white;
+            display: flex;
+            flex-direction: column;
+            align-items: center;
+            justify-content: center;
+            font-family: Arial;
+            z-index: 1000;
+        }
+        .screen h1 {
+            font-size: 48px;
+            margin-bottom: 20px;
+        }
+        .screen p {
+            font-size: 24px;
+            margin-bottom: 30px;
+            text-align: center;
+            line-height: 1.6;
+        }
+        .screen button {
+            padding: 15px 30px;
+            font-size: 24px;
+            background: #4CAF50;
+            color: white;
+            border: none;
+            border-radius: 5px;
+            cursor: pointer;
+            margin-top: 20px;
+            transition: background 0.3s;
+        }
+        .screen button:hover {
+            background: #45a049;
+        }
+        .floating-text {
+            position: absolute;
+            font-size: 24px;
+            font-weight: bold;
+            animation: float 1s forwards;
+            z-index: 99;
+        }
+        @keyframes float {
+            0% { transform: translateY(0); opacity: 1; }
+            100% { transform: translateY(-50px); opacity: 0; }
+        }
+        .plus { color: #4CAF50; }
+        .minus { color: #f44336; }
+        #player.jumping {
+            animation: jumpAnimation 0.5s ease-out;
+        }
+
+        @keyframes jumpAnimation {
+            0% { transform: scale(1); }
+            50% { transform: scale(1.1); }
+            100% { transform: scale(1); }
+        }
+    </style>
+</head>
+<body>
+    <div id="gameContainer">
+        <div id="player"></div>
+        <div id="score">0</div>
+        <div id="timer">120.0</div>
+        <div id="combo">Combo: 0</div>
+        
+        <div id="startScreen" class="screen">
+            <h1>¡Cuadrado Saltarín!</h1>
+            <p>
+                Espacio para saltar<br>
+                Evita los obstáculos (-1s)<br>
+                Recoge monedas:<br>
+                Verde: +1s | Azul: +2s y Velocidad<br>
+                Amarilla: +5s, Velocidad y Doble Salto
+            </p>
+            <button onclick="game.start()">JUGAR</button>
+        </div>
+    </div>
+
+    <script>
+        const game = {
+            handleKeydown: null,
+            // Nuevas variables para mejorar la experiencia del juego
+            speedBoostActive: false,
+            boostDuration: 0,
+            player: document.getElementById('player'),
+            container: document.getElementById('gameContainer'),
+            scoreEl: document.getElementById('score'),
+            timerEl: document.getElementById('timer'),
+            comboEl: document.getElementById('combo'),
+            startScreen: document.getElementById('startScreen'),
+            score: 0,
+            combo: 0,
+            time: 120,
+            isJumping: false,
+            canDoubleJump: false,
+            hasDoubleJump: false,
+            jumpHeight: 0,
+            jumpForce: 0,
+            baseSpeed: 3.5,
+            currentSpeed: 7,
+            gameLoop: null,
+            obstacles: [],
+            coins: [],
+
+            showFloatingText(x, y, text, isPlus) {
+                const el = document.createElement('div');
+                el.className = `floating-text ${isPlus ? 'plus' : 'minus'}`;
+                el.textContent = text;
+                el.style.left = x + 'px';
+                el.style.top = y + 'px';
+                this.container.appendChild(el);
+                setTimeout(() => el.remove(), 1000);
+            },
+
+            start() {
+                this.startScreen.style.display = 'none';
+                this.score = 0;
+                this.combo = 0;
+                this.time = 120;
+                this.scoreEl.textContent = this.score;
+                this.comboEl.textContent = 'Combo: ' + this.combo;
+                this.timerEl.textContent = this.time.toFixed(1);
+                if (!this.handleKeydown) {
+                    this.handleKeydown = (e) => {
+                        if (e.code === 'Space') this.jump();
+                    };
+                    document.addEventListener('keydown', this.handleKeydown);
+                }
+                clearInterval(this.obstacleInterval);
+                clearInterval(this.coinInterval);
+                this.spawnObstacleLoop();
+                this.spawnCoinLoop();
+                cancelAnimationFrame(this.gameLoop);
+                this.update();
+            },
+
+            jump() {
+                if (!this.isJumping) {
+                    this.isJumping = true;
+                    this.player.classList.add('jumping');
+                    this.jumpForce = 18 * (this.combo >= 3 ? 1.2 : 1);
+                } else if (this.canDoubleJump && this.hasDoubleJump) {
+                    this.jumpForce = 18 * (this.combo >= 3 ? 1.2 : 1);
+                    this.hasDoubleJump = false;
+                    this.player.classList.remove('powered');
+                }
+            },
+
+            update() {
+                this.gameLoop = requestAnimationFrame(() => this.update());
+                // Verificar si el jugador tiene un aumento de velocidad activo
+                if (this.speedBoostActive) {
+                    this.boostDuration -= 1 / 60;
+                    if (this.boostDuration <= 0) {
+                        this.speedBoostActive = false;
+                        this.currentSpeed = this.baseSpeed;
+                    }
+                }
+                if (this.isJumping) {
+                    this.jumpHeight += this.jumpForce;
+                    this.jumpForce -= 0.6;
+                    
+                    if (this.jumpHeight <= 0) {
+                        this.jumpHeight = 0;
+                        this.isJumping = false;
+                        this.player.classList.remove('jumping');
+                        this.jumpForce = 0;
+                    }
+                    
+                    this.player.style.bottom = this.jumpHeight + 'px';
+                }
+
+                this.time = Math.max(0, this.time - 1 / 60);
+                this.timerEl.textContent = this.time.toFixed(1);
+
+                if (this.time <= 0) {
+                    this.gameOver();
+                    return;
+                }
+
+                // Actualizar velocidad basada en combo
+                if (!this.speedBoostActive) {
+                    this.currentSpeed = this.baseSpeed * (this.combo >= 6 ? 1.5 : this.combo >= 3 ? 1.2 : 1);
+                }
+
+                this.updateObstacles();
+                this.updateCoins();
+            },
+
+            spawnObstacleLoop() {
+                this.obstacleInterval = setInterval(() => {
+                    this.spawnObstacle();
+                }, 2000);
+            },
+
+            spawnCoinLoop() {
+                this.coinInterval = setInterval(() => {
+                    this.spawnCoin();
+                }, 3000);
+            },
+
+            spawnObstacle() {
+                const obstacle = document.createElement('div');
+                obstacle.className = 'obstacle';
+                obstacle.style.left = '1600px';
+                this.container.appendChild(obstacle);
+                this.obstacles.push(obstacle);
+
+                if (this.combo >= 3 && this.combo < 6) {
+                    // 50% de probabilidad de generar dos obstáculos contiguos
+                    if (Math.random() < 0.5) {
+                        const secondObstacle = document.createElement('div');
+                        secondObstacle.className = 'obstacle';
+                        if (Math.random() < 0.5) {
+                            // Contiguos hacia el lado sin superposición
+                            secondObstacle.style.left = (parseInt(obstacle.style.left) + 74) + 'px';
+                            secondObstacle.style.bottom = '0';
+                        } else {
+                            // Contiguos hacia arriba sin superposición
+                            secondObstacle.style.left = obstacle.style.left;
+                            secondObstacle.style.bottom = '74px';
+                        }
+                        this.container.appendChild(secondObstacle);
+                        this.obstacles.push(secondObstacle);
+                    }
+                    // 50% de probabilidad de que los obstáculos sean un 20% más grandes
+                    if (Math.random() < 0.5) {
+                        obstacle.style.width = '74px';
+                        obstacle.style.height = '74px';
+                    }
+                }
+            },
+
+            updateObstacles() {
+                this.obstacles = this.obstacles.filter(obstacle => {
+                    let pos = parseInt(obstacle.style.left) - this.currentSpeed;
+                    obstacle.style.left = pos + 'px';
+                    
+                    if (pos < 150 && pos > 50 && this.jumpHeight < 40) {
+                        this.combo = 0;
+                        this.comboEl.textContent = 'Combo: 0';
+                        this.time = Math.max(0, this.time - 1);
+                        this.currentSpeed = this.baseSpeed;
+                        this.canDoubleJump = false;
+                        this.player.classList.remove('powered');
+                        this.showFloatingText(pos, 200, '-1', false);
+                    }
+
+                    if (pos < -40) {
+                        obstacle.remove();
+                        this.score++;
+                        this.scoreEl.textContent = this.score;
+                        return false;
+                    }
+                    return true;
+                });
+            },
+
+            spawnCoin() {
+                const height = Math.random() * 400;
+                let coinType;
+                let bonus;
+                if (this.combo >= 6) {
+                    coinType = 'yellow';
+                    bonus = 5;
+                } else if (this.combo >= 3) {
+                    coinType = 'blue';
+                    bonus = 2;
+                } else {
+                    coinType = 'green';
+                    bonus = 1;
+                }
+                
+                const coin = document.createElement('div');
+                coin.className = `coin ${coinType}`;
+                coin.textContent = `+${bonus}`;
+                coin.style.left = '1600px';
+                coin.style.bottom = height + 'px';
+                this.container.appendChild(coin);
+                this.coins.push({ coin, bonus });
+            },
+
+            updateCoins() {
+                this.coins = this.coins.filter(({ coin, bonus }) => {
+                    let pos = parseInt(coin.style.left) - this.currentSpeed;
+                    coin.style.left = pos + 'px';
+                    
+                    if (pos < 200 && pos > 0 && Math.abs(parseInt(coin.style.bottom) - this.jumpHeight) < 100) {
+                        this.combo++;
+                        this.comboEl.textContent = 'Combo: ' + this.combo;
+                        this.time = Math.min(150, this.time + bonus);
+                        
+                        if (this.combo >= 6) {
+                            this.canDoubleJump = true;
+                            this.hasDoubleJump = true;
+                            this.player.classList.add('powered');
+                            // Activar el impulso de velocidad cuando el combo sea alto
+                            this.speedBoostActive = true;
+                            this.boostDuration = 5; // Duración del impulso de velocidad en segundos
+                            this.currentSpeed = this.baseSpeed * 1.5;
+                        }
+                        
+                        this.showFloatingText(pos, parseInt(coin.style.bottom), `+${bonus}`, true);
+                        coin.remove();
+                        return false;
+                    }
+
+                    if (pos < -30) {
+                        coin.remove();
+                        return false;
+                    }
+                    return true;
+                });
+            },
+
+            gameOver() {
+                const gameOverScreen = document.createElement('div');
+                gameOverScreen.className = 'screen';
+                gameOverScreen.innerHTML = `
+                    <h1>¡Tiempo Agotado!</h1>
+                    <p>Puntuación: ${this.score}<br>Combo Máximo: ${this.combo}</p>
+                    <button onclick="location.reload()">JUGAR DE NUEVO</button>
+                `;
+                this.container.appendChild(gameOverScreen);
+            }
+        };
+    </script>
+</body>
+</html>
